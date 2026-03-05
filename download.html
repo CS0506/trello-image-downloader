@@ -6,85 +6,80 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body style="padding: 10px; font-family: sans-serif; font-size: 14px;">
-    <button id="exec" style="padding: 10px 20px; cursor: pointer; background: #0079bf; color: white; border: none; border-radius: 3px;">ダウンロード開始</button>
-    <div id="status" style="margin-top: 15px; white-space: pre-wrap; word-break: break-all; color: #333; border-top: 1px solid #ccc; padding-top: 10px;"></div>
+    <div style="margin-bottom: 10px;">
+        <input type="password" id="apiKey" placeholder="Trello API Key" style="width: 100%; margin-bottom: 5px;">
+        <input type="password" id="token" placeholder="Trello Token" style="width: 100%;">
+        <p style="font-size: 10px; color: #666;">※KeyとTokenは一時的な利用のみで保存されません</p>
+    </div>
+    <button id="exec" style="padding: 10px 20px; cursor: pointer; background: #0079bf; color: white; border: none; border-radius: 3px; width: 100%;">ダウンロード開始</button>
+    <div id="status" style="margin-top: 15px; white-space: pre-wrap; font-size: 12px; border-top: 1px solid #ccc; padding-top: 10px;"></div>
 
     <script>
         var t = TrelloPowerUp.iframe();
 
         document.getElementById('exec').addEventListener('click', async function() {
             const status = document.getElementById('status');
+            const key = document.getElementById('apiKey').value;
+            const token = document.getElementById('token').value;
+
+            if (!key || !token) {
+                status.innerText = "API Key と Token を入力してください。";
+                return;
+            }
+
             try {
-                status.style.color = "#333";
-                status.innerText = "カードデータを解析中...";
-                
-                // 'all' を指定して全ての情報を取得
+                status.innerText = "解析中...";
                 const card = await t.card('all');
                 const attachments = card.attachments || [];
 
-                // デバッグ用：取得できた全添付ファイルの名前を画面に出す
-                let debugInfo = `【デバッグ情報】\n全添付ファイル数: ${attachments.length}件\n`;
-                attachments.forEach(a => debugInfo += `- 名前: ${a.name}, 形式: ${a.mimeType}\n`);
-                status.innerText = debugInfo;
-
-                // 画像判定ロジック（拡張子判定を最優先）
                 const images = attachments.filter(a => {
                     const ext = a.name ? a.name.split('.').pop().toLowerCase() : '';
-                    const isImgExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext);
-                    const isImgMime = a.mimeType && a.mimeType.startsWith('image/');
-                    return isImgExt || isImgMime;
+                    return ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
                 });
 
                 if (images.length === 0) {
-                    status.innerText += "\n[判定結果] 画像として認識できるファイルがありませんでした。";
+                    status.innerText = "画像が見つかりません。";
                     return;
                 }
 
                 const zip = new JSZip();
-                status.innerText += `\n\n[開始] ${images.length}枚の処理を開始します...\n`;
+                let downloadedCount = 0;
 
                 for (let i = 0; i < images.length; i++) {
                     const img = images[i];
-                    status.innerText += `取得中: ${img.name}...\n`;
+                    status.innerText = `ダウンロード中 (${i+1}/${images.length}): ${img.name}`;
                     
                     try {
-                        // CORSエラー回避のため、可能な限り認証情報を付加せずにfetch
-                        // ブラウザのキャッシュを利用させる設定を追加
-                        const response = await fetch(img.url, {
-                            method: 'GET',
-                            mode: 'cors',
-                            credentials: 'omit' 
-                        });
+                        // URLに認証情報を付加してCORSを回避する試み
+                        const authUrl = `${img.url}?key=${key}&token=${token}`;
+                        const response = await fetch(authUrl);
                         
-                        if (!response.ok) throw new Error("取得失敗");
+                        if (!response.ok) throw new Error("認証エラー");
                         
                         const blob = await response.blob();
                         zip.file(img.name, blob);
+                        downloadedCount++;
                     } catch (e) {
-                        status.innerText += `  ⚠️エラー: ${img.name} の取得に失敗（CORS制限の可能性があります）\n`;
-                        console.error("Fetch error:", e);
+                        status.innerText += `\n ⚠️失敗: ${img.name} (認証情報が正しくない可能性があります)`;
                     }
                 }
 
-                status.innerText += "\nZIPファイルを作成中...";
+                if (downloadedCount === 0) {
+                    status.innerText = "ファイルを1つも取得できませんでした。";
+                    return;
+                }
+
+                status.innerText = "ZIPファイルを作成中...";
                 const content = await zip.generateAsync({type: "blob"});
-                
                 const url = window.URL.createObjectURL(content);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = `${card.name || 'trello'}_images.zip`;
-                document.body.appendChild(a);
                 a.click();
                 
-                setTimeout(() => {
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                }, 100);
-                
-                status.innerText += "\n完了しました！";
+                status.innerText = "完了しました！";
             } catch (err) {
-                status.style.color = "red";
-                status.innerText += "\n致命的エラー: " + err.message;
+                status.innerText = "エラー: " + err.message;
             }
         });
     </script>
