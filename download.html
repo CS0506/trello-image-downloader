@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://p.trellocdn.com/power-up.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  </head>
+  <body>
+    <button id="exec">ダウンロード開始</button>
+    <div id="status"></div>
+
+    <script>
+      var t = TrelloPowerUp.iframe();
+
+      document.getElementById('exec').addEventListener('click', async function() {
+        const card = await t.card('all');
+        const attachments = card.attachments;
+        const images = attachments.filter(a => a.mimeType.startsWith('image/'));
+
+        if (images.length === 0) {
+          document.getElementById('status').innerText = "画像が見つかりません。";
+          return;
+        }
+
+        const zip = new JSZip();
+        document.getElementById('status').innerText = "処理中...";
+
+        for (const img of images) {
+          // 画像をFetch (CORS回避のためTrelloのプロキシ経由が必要な場合がある)
+          const response = await fetch(img.url);
+          const blob = await response.blob();
+          zip.file(img.name, blob);
+        }
+
+        const content = await zip.generateAsync({type: "blob"});
+        const url = window.URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${card.name}_images.zip`;
+        a.click();
+        
+        t.closePopup();
+      });
+    </script>
+  </body>
+</html>

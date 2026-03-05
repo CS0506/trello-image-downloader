@@ -1,0 +1,10 @@
+{
+  "name": "Image Downloader",
+  "href": "index.html",
+  "icon": {
+    "url": "https://trello-powerups.s3.amazonaws.com/default/images/icon-512.png"
+  },
+  "capabilities": [
+    "card-buttons"
+  ]
+}
