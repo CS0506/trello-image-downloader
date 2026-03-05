@@ -5,9 +5,9 @@
     <script src="https://p.trellocdn.com/power-up.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
-<body style="padding: 10px; font-family: sans-serif;">
-    <button id="exec" style="padding: 8px 16px; cursor: pointer;">ダウンロード開始</button>
-    <div id="status" style="margin-top: 10px; font-size: 12px; color: #333; white-space: pre-wrap;"></div>
+<body style="padding: 10px; font-family: sans-serif; font-size: 14px;">
+    <button id="exec" style="padding: 10px 20px; cursor: pointer; background: #0079bf; color: white; border: none; border-radius: 3px;">ダウンロード開始</button>
+    <div id="status" style="margin-top: 15px; white-space: pre-wrap; word-break: break-all; color: #333; border-top: 1px solid #ccc; padding-top: 10px;"></div>
 
     <script>
         var t = TrelloPowerUp.iframe();
@@ -16,49 +16,61 @@
             const status = document.getElementById('status');
             try {
                 status.style.color = "#333";
-                status.innerText = "解析中...";
+                status.innerText = "カードデータを解析中...";
                 
-                const card = await t.card('attachments');
+                // 'all' を指定して全ての情報を取得
+                const card = await t.card('all');
                 const attachments = card.attachments || [];
 
-                // 判定ロジックの強化：MIMEタイプ または 拡張子 で判定
+                // デバッグ用：取得できた全添付ファイルの名前を画面に出す
+                let debugInfo = `【デバッグ情報】\n全添付ファイル数: ${attachments.length}件\n`;
+                attachments.forEach(a => debugInfo += `- 名前: ${a.name}, 形式: ${a.mimeType}\n`);
+                status.innerText = debugInfo;
+
+                // 画像判定ロジック（拡張子判定を最優先）
                 const images = attachments.filter(a => {
-                    // 1. MIMEタイプが image/ で始まっているか
-                    const hasImageMime = a.mimeType && typeof a.mimeType === 'string' && a.mimeType.startsWith('image/');
-                    
-                    // 2. ファイル名が画像特有の拡張子で終わっているか
-                    const imageExtensions = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
-                    const hasImageExt = a.name && typeof a.name === 'string' && imageExtensions.test(a.name);
-                    
-                    return hasImageMime || hasImageExt;
+                    const ext = a.name ? a.name.split('.').pop().toLowerCase() : '';
+                    const isImgExt = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext);
+                    const isImgMime = a.mimeType && a.mimeType.startsWith('image/');
+                    return isImgExt || isImgMime;
                 });
 
                 if (images.length === 0) {
-                    status.innerText = `画像が見つかりません。\n(全添付ファイル数: ${attachments.length}件)\n\n※画像として認識されたファイルが0件です。`;
-                    console.log("全添付ファイルデータ:", attachments);
+                    status.innerText += "\n[判定結果] 画像として認識できるファイルがありませんでした。";
                     return;
                 }
 
                 const zip = new JSZip();
-                status.innerText = `${images.length} 枚の画像を処理します...`;
+                status.innerText += `\n\n[開始] ${images.length}枚の処理を開始します...\n`;
 
                 for (let i = 0; i < images.length; i++) {
                     const img = images[i];
-                    status.innerText = `取得中 (${i + 1}/${images.length}): ${img.name}`;
+                    status.innerText += `取得中: ${img.name}...\n`;
                     
-                    const response = await fetch(img.url);
-                    if (!response.ok) throw new Error(`通信エラー: ${img.name}`);
-                    
-                    const blob = await response.blob();
-                    zip.file(img.name, blob);
+                    try {
+                        // CORSエラー回避のため、可能な限り認証情報を付加せずにfetch
+                        // ブラウザのキャッシュを利用させる設定を追加
+                        const response = await fetch(img.url, {
+                            method: 'GET',
+                            mode: 'cors',
+                            credentials: 'omit' 
+                        });
+                        
+                        if (!response.ok) throw new Error("取得失敗");
+                        
+                        const blob = await response.blob();
+                        zip.file(img.name, blob);
+                    } catch (e) {
+                        status.innerText += `  ⚠️エラー: ${img.name} の取得に失敗（CORS制限の可能性があります）\n`;
+                        console.error("Fetch error:", e);
+                    }
                 }
 
-                status.innerText = "ZIPを作成中...";
+                status.innerText += "\nZIPファイルを作成中...";
                 const content = await zip.generateAsync({type: "blob"});
                 
                 const url = window.URL.createObjectURL(content);
                 const a = document.createElement('a');
-                a.style.display = 'none';
                 a.href = url;
                 a.download = `${card.name || 'trello'}_images.zip`;
                 document.body.appendChild(a);
@@ -69,11 +81,10 @@
                     window.URL.revokeObjectURL(url);
                 }, 100);
                 
-                status.innerText = "完了しました。";
+                status.innerText += "\n完了しました！";
             } catch (err) {
-                console.error("Error:", err);
                 status.style.color = "red";
-                status.innerText = "エラーが発生しました:\n" + err.message;
+                status.innerText += "\n致命的エラー: " + err.message;
             }
         });
     </script>
