@@ -4,91 +4,101 @@
     <meta charset="utf-8">
     <script src="https://p.trellocdn.com/power-up.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 12px; color: #172b4d; }
+        .input-group { margin-bottom: 8px; }
+        input { width: 100%; padding: 8px; border: 1px solid #dfe1e6; border-radius: 3px; box-sizing: border-box; font-size: 12px; }
+        button { width: 100%; padding: 10px; background: #0079bf; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; margin-top: 5px; }
+        button:hover { background: #026aa7; }
+        #status-list { margin-top: 15px; border-top: 1px solid #ebecf0; padding-top: 10px; font-size: 11px; max-height: 200px; overflow-y: auto; }
+        .item { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f4f5f7; }
+        .success { color: #61bd4f; }
+        .error { color: #eb5a46; }
+        .loader { color: #5e6c84; font-style: italic; }
+    </style>
 </head>
-<body style="padding: 10px; font-family: sans-serif; font-size: 14px;">
-    <div style="margin-bottom: 10px; background: #e3f2fd; padding: 10px; border-radius: 3px; font-size: 11px;">
-        1. PCの時計が正確か確認してください。<br>
-        2. Tokenは「承認」後に表示される英数字の羅列を入力してください。
+<body>
+    <div id="setup-ui">
+        <div class="input-group"><input type="password" id="apiKey" placeholder="Trello API Key"></div>
+        <div class="input-group"><input type="password" id="token" placeholder="Trello Token"></div>
     </div>
-    <input type="password" id="apiKey" placeholder="Trello API Key" style="width: 100%; margin-bottom: 5px; padding: 5px;">
-    <input type="password" id="token" placeholder="Trello Token" style="width: 100%; margin-bottom: 10px; padding: 5px;">
-    
-    <button id="exec" style="padding: 10px; cursor: pointer; background: #0079bf; color: white; border: none; border-radius: 3px; width: 100%;">ダウンロード開始</button>
-    
-    <div id="status" style="margin-top: 15px; white-space: pre-wrap; font-size: 11px; border-top: 1px solid #ccc; padding-top: 10px; color: #444;"></div>
+    <button id="exec">一括ダウンロード開始</button>
+    <div id="status-list"></div>
 
     <script>
-        var t = TrelloPowerUp.iframe();
+        const t = TrelloPowerUp.iframe();
+        const statusList = document.getElementById('status-list');
 
+        // 設定の復元
         document.getElementById('apiKey').value = localStorage.getItem('trello_key') || '';
         document.getElementById('token').value = localStorage.getItem('trello_token') || '';
 
+        function log(msg, className = '') {
+            const div = document.createElement('div');
+            div.className = 'item ' + className;
+            div.innerHTML = `<span>${msg}</span>`;
+            statusList.prepend(div);
+        }
+
         document.getElementById('exec').addEventListener('click', async function() {
-            const status = document.getElementById('status');
             const key = document.getElementById('apiKey').value.trim();
             const token = document.getElementById('token').value.trim();
 
             if (!key || !token) {
-                status.innerText = "Error: KeyとTokenを入力してください。";
+                log("API KeyとTokenを入力してください", "error");
                 return;
             }
 
             localStorage.setItem('trello_key', key);
             localStorage.setItem('trello_token', token);
+            statusList.innerHTML = ''; // クリア
 
             try {
-                status.innerText = "カード解析中...\n";
+                log("カード情報を読み込み中...", "loader");
                 const card = await t.card('all');
-                const attachments = card.attachments || [];
-
-                const images = attachments.filter(a => {
-                    const ext = a.name ? a.name.split('.').pop().toLowerCase() : '';
-                    return ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+                const images = (card.attachments || []).filter(a => {
+                    const name = a.name ? a.name.toLowerCase() : '';
+                    return name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.gif') || name.endsWith('.webp');
                 });
 
+                if (images.length === 0) {
+                    log("画像が見つかりませんでした", "error");
+                    return;
+                }
+
                 const zip = new JSZip();
-                let successCount = 0;
+                let count = 0;
 
-                for (let i = 0; i < images.length; i++) {
-                    const img = images[i];
-                    status.innerText += `[${i+1}/${images.length}] ${img.name} 取得中... `;
-                    
+                for (const img of images) {
+                    log(`${img.name} を取得中...`, "loader");
                     try {
-                        // URL連結ロジックの修正
-                        let authUrl = img.url;
-                        authUrl += (authUrl.indexOf('?') === -1 ? '?' : '&') + `key=${key}&token=${token}`;
+                        // 論理的に正しいURL結合 (?があれば&、なければ?で結合)
+                        const connector = img.url.includes('?') ? '&' : '?';
+                        const authUrl = `${img.url}${connector}key=${key}&token=${token}`;
 
-                        // CORS回避のためのフェッチ設定
-                        const response = await fetch(authUrl, {
-                            method: 'GET',
-                            mode: 'cors'
-                        });
-                        
+                        const response = await fetch(authUrl);
                         if (!response.ok) throw new Error(`HTTP ${response.status}`);
                         
                         const blob = await response.blob();
                         zip.file(img.name, blob);
-                        status.innerText += "✅\n";
-                        successCount++;
+                        log(`OK: ${img.name}`, "success");
+                        count++;
                     } catch (e) {
-                        status.innerText += `❌ (${e.message})\n`;
+                        log(`ERR: ${img.name} (${e.message})`, "error");
                     }
                 }
 
-                if (successCount > 0) {
-                    status.innerText += `\n${successCount}個のファイルをZIP化中...`;
+                if (count > 0) {
+                    log("ZIPファイルを生成中...", "loader");
                     const content = await zip.generateAsync({type: "blob"});
-                    const url = window.URL.createObjectURL(content);
                     const a = document.createElement('a');
-                    a.href = url;
+                    a.href = window.URL.createObjectURL(content);
                     a.download = `${card.name}_images.zip`;
                     a.click();
-                    status.innerText += "\n完了！";
-                } else {
-                    status.innerText += "\n画像を取得できませんでした。Key/TokenとPCの時刻設定を再確認してください。";
+                    log("ダウンロード完了！", "success");
                 }
             } catch (err) {
-                status.innerText += "\n致命的エラー: " + err.message;
+                log("致命的エラー: " + err.message, "error");
             }
         });
     </script>
