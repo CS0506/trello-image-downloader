@@ -6,8 +6,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body style="padding: 10px; font-family: sans-serif; font-size: 14px;">
-    <div style="margin-bottom: 10px; background: #fff9c4; padding: 10px; border-radius: 3px; font-size: 12px;">
-        <strong>【重要】</strong> 401エラーが出る場合、Tokenが「シークレット」ではなく、承認後に表示される「長い文字列」であることを確認してください。
+    <div style="margin-bottom: 10px; background: #e3f2fd; padding: 10px; border-radius: 3px; font-size: 11px;">
+        1. PCの時計が正確か確認してください。<br>
+        2. Tokenは「承認」後に表示される英数字の羅列を入力してください。
     </div>
     <input type="password" id="apiKey" placeholder="Trello API Key" style="width: 100%; margin-bottom: 5px; padding: 5px;">
     <input type="password" id="token" placeholder="Trello Token" style="width: 100%; margin-bottom: 10px; padding: 5px;">
@@ -19,14 +20,13 @@
     <script>
         var t = TrelloPowerUp.iframe();
 
-        // 保存された値を復元
         document.getElementById('apiKey').value = localStorage.getItem('trello_key') || '';
         document.getElementById('token').value = localStorage.getItem('trello_token') || '';
 
         document.getElementById('exec').addEventListener('click', async function() {
             const status = document.getElementById('status');
-            const key = document.getElementById('apiKey').value;
-            const token = document.getElementById('token').value;
+            const key = document.getElementById('apiKey').value.trim();
+            const token = document.getElementById('token').value.trim();
 
             if (!key || !token) {
                 status.innerText = "Error: KeyとTokenを入力してください。";
@@ -37,7 +37,7 @@
             localStorage.setItem('trello_token', token);
 
             try {
-                status.innerText = "カード情報を取得中...\n";
+                status.innerText = "カード解析中...\n";
                 const card = await t.card('all');
                 const attachments = card.attachments || [];
 
@@ -46,43 +46,37 @@
                     return ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
                 });
 
-                if (images.length === 0) {
-                    status.innerText += "画像が見つかりません。";
-                    return;
-                }
-
                 const zip = new JSZip();
                 let successCount = 0;
 
                 for (let i = 0; i < images.length; i++) {
                     const img = images[i];
-                    status.innerText += `[${i+1}/${images.length}] ${img.name} を取得中... `;
+                    status.innerText += `[${i+1}/${images.length}] ${img.name} 取得中... `;
                     
                     try {
-                        // Trello APIのダウンロードURLを構築
-                        // ログにあった 401 を防ぐため、auth情報を確実に付与
-                        const downloadUrl = `${img.url}&key=${key}&token=${token}`;
+                        // URL連結ロジックの修正
+                        let authUrl = img.url;
+                        authUrl += (authUrl.indexOf('?') === -1 ? '?' : '&') + `key=${key}&token=${token}`;
+
+                        // CORS回避のためのフェッチ設定
+                        const response = await fetch(authUrl, {
+                            method: 'GET',
+                            mode: 'cors'
+                        });
                         
-                        // t.proxyUrl を使ってCORS制限の回避を試みる
-                        const proxiedUrl = t.signUrl(downloadUrl);
-                        
-                        const response = await fetch(proxiedUrl);
-                        
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}`);
-                        }
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
                         
                         const blob = await response.blob();
                         zip.file(img.name, blob);
-                        status.innerText += "✅成功\n";
+                        status.innerText += "✅\n";
                         successCount++;
                     } catch (e) {
-                        status.innerText += `❌失敗 (${e.message})\n`;
+                        status.innerText += `❌ (${e.message})\n`;
                     }
                 }
 
                 if (successCount > 0) {
-                    status.innerText += `\n${successCount}個のファイルをZIP化しています...`;
+                    status.innerText += `\n${successCount}個のファイルをZIP化中...`;
                     const content = await zip.generateAsync({type: "blob"});
                     const url = window.URL.createObjectURL(content);
                     const a = document.createElement('a');
@@ -91,10 +85,10 @@
                     a.click();
                     status.innerText += "\n完了！";
                 } else {
-                    status.innerText += "\n有効な画像データが1つも取得できませんでした。Tokenの権限を確認してください。";
+                    status.innerText += "\n画像を取得できませんでした。Key/TokenとPCの時刻設定を再確認してください。";
                 }
             } catch (err) {
-                status.innerText += "\nエラー: " + err.message;
+                status.innerText += "\n致命的エラー: " + err.message;
             }
         });
     </script>
