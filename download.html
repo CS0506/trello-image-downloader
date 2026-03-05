@@ -7,7 +7,7 @@
 </head>
 <body style="padding: 10px; font-family: sans-serif;">
     <button id="exec" style="padding: 8px 16px; cursor: pointer;">ダウンロード開始</button>
-    <div id="status" style="margin-top: 10px; font-size: 12px; color: #333; line-height: 1.5;"></div>
+    <div id="status" style="margin-top: 10px; font-size: 12px; color: #333; white-space: pre-wrap;"></div>
 
     <script>
         var t = TrelloPowerUp.iframe();
@@ -16,20 +16,26 @@
             const status = document.getElementById('status');
             try {
                 status.style.color = "#333";
-                status.innerText = "カード情報を読み込み中...";
+                status.innerText = "解析中...";
                 
-                const card = await t.card('attachments'); // attachmentsのみ取得
+                const card = await t.card('attachments');
                 const attachments = card.attachments || [];
 
-                // エラー箇所の修正：a.mimeType が存在し、かつ文字列であることを確認
+                // 判定ロジックの強化：MIMEタイプ または 拡張子 で判定
                 const images = attachments.filter(a => {
-                    return a.mimeType && 
-                           typeof a.mimeType === 'string' && 
-                           a.mimeType.startsWith('image/');
+                    // 1. MIMEタイプが image/ で始まっているか
+                    const hasImageMime = a.mimeType && typeof a.mimeType === 'string' && a.mimeType.startsWith('image/');
+                    
+                    // 2. ファイル名が画像特有の拡張子で終わっているか
+                    const imageExtensions = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
+                    const hasImageExt = a.name && typeof a.name === 'string' && imageExtensions.test(a.name);
+                    
+                    return hasImageMime || hasImageExt;
                 });
 
                 if (images.length === 0) {
-                    status.innerText = "画像ファイルが見つかりませんでした。\n（リンク形式の添付は除外されます）";
+                    status.innerText = `画像が見つかりません。\n(全添付ファイル数: ${attachments.length}件)\n\n※画像として認識されたファイルが0件です。`;
+                    console.log("全添付ファイルデータ:", attachments);
                     return;
                 }
 
@@ -47,7 +53,7 @@
                     zip.file(img.name, blob);
                 }
 
-                status.innerText = "ZIPアーカイブを作成中...";
+                status.innerText = "ZIPを作成中...";
                 const content = await zip.generateAsync({type: "blob"});
                 
                 const url = window.URL.createObjectURL(content);
@@ -58,15 +64,14 @@
                 document.body.appendChild(a);
                 a.click();
                 
-                // 後片付け
                 setTimeout(() => {
                     document.body.removeChild(a);
                     window.URL.revokeObjectURL(url);
                 }, 100);
                 
-                status.innerText = "ダウンロードが完了しました。";
+                status.innerText = "完了しました。";
             } catch (err) {
-                console.error("Error detailed:", err);
+                console.error("Error:", err);
                 status.style.color = "red";
                 status.innerText = "エラーが発生しました:\n" + err.message;
             }
