@@ -3,25 +3,23 @@
 <head>
     <meta charset="utf-8">
     <script src="https://p.trellocdn.com/power-up.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 10px; color: #172b4d; background: #f4f5f7; }
-        .card { background: white; padding: 10px; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
-        input { width: 100%; padding: 8px; margin-bottom: 5px; border: 1px solid #ddd; border-radius: 3px; }
-        button { width: 100%; padding: 10px; background: #0079bf; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; }
-        #log { margin-top: 10px; font-size: 11px; max-height: 150px; overflow-y: auto; background: #eee; padding: 5px; border-radius: 3px; }
-        .download-link { display: block; padding: 5px; margin-top: 5px; background: #ebecf0; color: #172b4d; text-decoration: none; border-radius: 3px; text-align: center; font-size: 12px; }
-        .download-link:hover { background: #dfe1e6; }
+        body { font-family: sans-serif; padding: 15px; color: #172b4d; background: #f4f5f7; }
+        .info { background: #fff9c4; padding: 10px; border-radius: 3px; font-size: 11px; margin-bottom: 10px; border: 1px solid #f2e08a; }
+        input { width: 100%; padding: 8px; margin-bottom: 5px; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #5aac44; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #519839; }
+        #status { margin-top: 10px; font-size: 11px; color: #5e6c84; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <input type="password" id="apiKey" placeholder="API Key">
-        <input type="password" id="token" placeholder="Token">
-        <button id="exec">一括ダウンロード</button>
-        <div id="log">ログ: 待機中</div>
-        <div id="manual-links"></div>
+    <div class="info">
+        ブラウザから「複数ファイルのダウンロード許可」を求められた場合は「許可」を選択してください。
     </div>
+    <input type="password" id="apiKey" placeholder="Trello API Key">
+    <input type="password" id="token" placeholder="Trello Token">
+    <button id="exec">一斉ダウンロード開始</button>
+    <div id="status"></div>
 
     <script>
         const t = TrelloPowerUp.iframe();
@@ -31,56 +29,44 @@
         document.getElementById('exec').addEventListener('click', async function() {
             const key = document.getElementById('apiKey').value.trim();
             const token = document.getElementById('token').value.trim();
-            const log = document.getElementById('log');
-            const links = document.getElementById('manual-links');
+            const status = document.getElementById('status');
             
             localStorage.setItem('trello_key', key);
             localStorage.setItem('trello_token', token);
-            links.innerHTML = '';
-            log.innerText = "開始します...";
 
             try {
+                status.innerText = "カード情報を取得中...";
                 const card = await t.card('all');
                 const images = (card.attachments || []).filter(a => a.name.match(/\.(jpg|jpeg|png|gif|webp)$/i));
-                const zip = new JSZip();
-                let successCount = 0;
 
-                for (const img of images) {
+                if (images.length === 0) {
+                    status.innerText = "画像が見つかりませんでした。";
+                    return;
+                }
+
+                status.innerText = `${images.length}枚の保存を順次開始します...`;
+
+                for (let i = 0; i < images.length; i++) {
+                    const img = images[i];
                     const connector = img.url.includes('?') ? '&' : '?';
                     const authUrl = `${img.url}${connector}key=${key}&token=${token}`;
+
+                    // fetchを使わず、直接アンカータグで保存命令を出す
+                    const a = document.createElement('a');
+                    a.href = authUrl;
+                    a.download = img.name;
+                    a.target = "_blank"; // ブラウザによっては別タブで開くが、認証URLなら保存が走る
+                    document.body.appendChild(a);
+                    a.click();
                     
-                    try {
-                        // ZIP化のためにデータを取得
-                        const response = await fetch(authUrl);
-                        if (!response.ok) throw new Error(response.status);
-                        const blob = await response.blob();
-                        zip.file(img.name, blob);
-                        successCount++;
-                        log.innerText += `\nOK: ${img.name}`;
-                    } catch (e) {
-                        // 失敗した場合、手動ダウンロード用のボタンを表示
-                        log.innerText += `\nNG: ${img.name} (CORS/認証エラー)`;
-                        const a = document.createElement('a');
-                        a.href = authUrl;
-                        a.target = "_blank";
-                        a.className = "download-link";
-                        a.innerText = `📎 ${img.name} を手動で開く`;
-                        links.appendChild(a);
-                    }
+                    // ブラウザの同時実行制限を避けるため、少し間隔を空ける
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                    document.body.removeChild(a);
                 }
 
-                if (successCount > 0) {
-                    const content = await zip.generateAsync({type: "blob"});
-                    const a = document.createElement('a');
-                    a.href = window.URL.createObjectURL(content);
-                    a.download = `${card.name}_images.zip`;
-                    a.click();
-                    log.innerText += "\nZIP保存完了！";
-                } else if (images.length > 0) {
-                    log.innerText += "\n一括保存に失敗しました。下のリンクから個別に保存してください。";
-                }
+                status.innerText = "全画像の保存命令が完了しました。";
             } catch (err) {
-                log.innerText += "\nエラー: " + err.message;
+                status.innerText = "エラー: " + err.message;
             }
         });
     </script>
