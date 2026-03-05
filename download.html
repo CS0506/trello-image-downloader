@@ -6,16 +6,22 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body style="padding: 10px; font-family: sans-serif; font-size: 14px;">
-    <div style="margin-bottom: 10px;">
-        <input type="password" id="apiKey" placeholder="Trello API Key" style="width: 100%; margin-bottom: 5px;">
-        <input type="password" id="token" placeholder="Trello Token" style="width: 100%;">
-        <p style="font-size: 10px; color: #666;">※KeyとTokenは一時的な利用のみで保存されません</p>
+    <div style="margin-bottom: 10px; background: #fff9c4; padding: 10px; border-radius: 3px; font-size: 12px;">
+        <strong>【重要】</strong> 401エラーが出る場合、Tokenが「シークレット」ではなく、承認後に表示される「長い文字列」であることを確認してください。
     </div>
-    <button id="exec" style="padding: 10px 20px; cursor: pointer; background: #0079bf; color: white; border: none; border-radius: 3px; width: 100%;">ダウンロード開始</button>
-    <div id="status" style="margin-top: 15px; white-space: pre-wrap; font-size: 12px; border-top: 1px solid #ccc; padding-top: 10px;"></div>
+    <input type="password" id="apiKey" placeholder="Trello API Key" style="width: 100%; margin-bottom: 5px; padding: 5px;">
+    <input type="password" id="token" placeholder="Trello Token" style="width: 100%; margin-bottom: 10px; padding: 5px;">
+    
+    <button id="exec" style="padding: 10px; cursor: pointer; background: #0079bf; color: white; border: none; border-radius: 3px; width: 100%;">ダウンロード開始</button>
+    
+    <div id="status" style="margin-top: 15px; white-space: pre-wrap; font-size: 11px; border-top: 1px solid #ccc; padding-top: 10px; color: #444;"></div>
 
     <script>
         var t = TrelloPowerUp.iframe();
+
+        // 保存された値を復元
+        document.getElementById('apiKey').value = localStorage.getItem('trello_key') || '';
+        document.getElementById('token').value = localStorage.getItem('trello_token') || '';
 
         document.getElementById('exec').addEventListener('click', async function() {
             const status = document.getElementById('status');
@@ -23,12 +29,15 @@
             const token = document.getElementById('token').value;
 
             if (!key || !token) {
-                status.innerText = "API Key と Token を入力してください。";
+                status.innerText = "Error: KeyとTokenを入力してください。";
                 return;
             }
 
+            localStorage.setItem('trello_key', key);
+            localStorage.setItem('trello_token', token);
+
             try {
-                status.innerText = "解析中...";
+                status.innerText = "カード情報を取得中...\n";
                 const card = await t.card('all');
                 const attachments = card.attachments || [];
 
@@ -38,48 +47,54 @@
                 });
 
                 if (images.length === 0) {
-                    status.innerText = "画像が見つかりません。";
+                    status.innerText += "画像が見つかりません。";
                     return;
                 }
 
                 const zip = new JSZip();
-                let downloadedCount = 0;
+                let successCount = 0;
 
                 for (let i = 0; i < images.length; i++) {
                     const img = images[i];
-                    status.innerText = `ダウンロード中 (${i+1}/${images.length}): ${img.name}`;
+                    status.innerText += `[${i+1}/${images.length}] ${img.name} を取得中... `;
                     
                     try {
-                        // URLに認証情報を付加してCORSを回避する試み
-                        const authUrl = `${img.url}?key=${key}&token=${token}`;
-                        const response = await fetch(authUrl);
+                        // Trello APIのダウンロードURLを構築
+                        // ログにあった 401 を防ぐため、auth情報を確実に付与
+                        const downloadUrl = `${img.url}&key=${key}&token=${token}`;
                         
-                        if (!response.ok) throw new Error("認証エラー");
+                        // t.proxyUrl を使ってCORS制限の回避を試みる
+                        const proxiedUrl = t.signUrl(downloadUrl);
+                        
+                        const response = await fetch(proxiedUrl);
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}`);
+                        }
                         
                         const blob = await response.blob();
                         zip.file(img.name, blob);
-                        downloadedCount++;
+                        status.innerText += "✅成功\n";
+                        successCount++;
                     } catch (e) {
-                        status.innerText += `\n ⚠️失敗: ${img.name} (認証情報が正しくない可能性があります)`;
+                        status.innerText += `❌失敗 (${e.message})\n`;
                     }
                 }
 
-                if (downloadedCount === 0) {
-                    status.innerText = "ファイルを1つも取得できませんでした。";
-                    return;
+                if (successCount > 0) {
+                    status.innerText += `\n${successCount}個のファイルをZIP化しています...`;
+                    const content = await zip.generateAsync({type: "blob"});
+                    const url = window.URL.createObjectURL(content);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${card.name}_images.zip`;
+                    a.click();
+                    status.innerText += "\n完了！";
+                } else {
+                    status.innerText += "\n有効な画像データが1つも取得できませんでした。Tokenの権限を確認してください。";
                 }
-
-                status.innerText = "ZIPファイルを作成中...";
-                const content = await zip.generateAsync({type: "blob"});
-                const url = window.URL.createObjectURL(content);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${card.name || 'trello'}_images.zip`;
-                a.click();
-                
-                status.innerText = "完了しました！";
             } catch (err) {
-                status.innerText = "エラー: " + err.message;
+                status.innerText += "\nエラー: " + err.message;
             }
         });
     </script>
