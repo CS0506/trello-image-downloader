@@ -1,45 +1,76 @@
 <!DOCTYPE html>
 <html>
-  <head>
+<head>
+    <meta charset="utf-8">
     <script src="https://p.trellocdn.com/power-up.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  </head>
-  <body>
-    <button id="exec">ダウンロード開始</button>
-    <div id="status"></div>
+</head>
+<body style="padding: 10px; font-family: sans-serif;">
+    <button id="exec" style="padding: 8px 16px; cursor: pointer;">ダウンロード開始</button>
+    <div id="status" style="margin-top: 10px; font-size: 12px; color: #333; line-height: 1.5;"></div>
 
     <script>
-      var t = TrelloPowerUp.iframe();
+        var t = TrelloPowerUp.iframe();
 
-      document.getElementById('exec').addEventListener('click', async function() {
-        const card = await t.card('all');
-        const attachments = card.attachments;
-        const images = attachments.filter(a => a.mimeType.startsWith('image/'));
+        document.getElementById('exec').addEventListener('click', async function() {
+            const status = document.getElementById('status');
+            try {
+                status.style.color = "#333";
+                status.innerText = "カード情報を読み込み中...";
+                
+                const card = await t.card('attachments'); // attachmentsのみ取得
+                const attachments = card.attachments || [];
 
-        if (images.length === 0) {
-          document.getElementById('status').innerText = "画像が見つかりません。";
-          return;
-        }
+                // エラー箇所の修正：a.mimeType が存在し、かつ文字列であることを確認
+                const images = attachments.filter(a => {
+                    return a.mimeType && 
+                           typeof a.mimeType === 'string' && 
+                           a.mimeType.startsWith('image/');
+                });
 
-        const zip = new JSZip();
-        document.getElementById('status').innerText = "処理中...";
+                if (images.length === 0) {
+                    status.innerText = "画像ファイルが見つかりませんでした。\n（リンク形式の添付は除外されます）";
+                    return;
+                }
 
-        for (const img of images) {
-          // 画像をFetch (CORS回避のためTrelloのプロキシ経由が必要な場合がある)
-          const response = await fetch(img.url);
-          const blob = await response.blob();
-          zip.file(img.name, blob);
-        }
+                const zip = new JSZip();
+                status.innerText = `${images.length} 枚の画像を処理します...`;
 
-        const content = await zip.generateAsync({type: "blob"});
-        const url = window.URL.createObjectURL(content);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${card.name}_images.zip`;
-        a.click();
-        
-        t.closePopup();
-      });
+                for (let i = 0; i < images.length; i++) {
+                    const img = images[i];
+                    status.innerText = `取得中 (${i + 1}/${images.length}): ${img.name}`;
+                    
+                    const response = await fetch(img.url);
+                    if (!response.ok) throw new Error(`通信エラー: ${img.name}`);
+                    
+                    const blob = await response.blob();
+                    zip.file(img.name, blob);
+                }
+
+                status.innerText = "ZIPアーカイブを作成中...";
+                const content = await zip.generateAsync({type: "blob"});
+                
+                const url = window.URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = `${card.name || 'trello'}_images.zip`;
+                document.body.appendChild(a);
+                a.click();
+                
+                // 後片付け
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+                
+                status.innerText = "ダウンロードが完了しました。";
+            } catch (err) {
+                console.error("Error detailed:", err);
+                status.style.color = "red";
+                status.innerText = "エラーが発生しました:\n" + err.message;
+            }
+        });
     </script>
-  </body>
+</body>
 </html>
