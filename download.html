@@ -5,100 +5,82 @@
     <script src="https://p.trellocdn.com/power-up.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 12px; color: #172b4d; }
-        .input-group { margin-bottom: 8px; }
-        input { width: 100%; padding: 8px; border: 1px solid #dfe1e6; border-radius: 3px; box-sizing: border-box; font-size: 12px; }
-        button { width: 100%; padding: 10px; background: #0079bf; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; margin-top: 5px; }
-        button:hover { background: #026aa7; }
-        #status-list { margin-top: 15px; border-top: 1px solid #ebecf0; padding-top: 10px; font-size: 11px; max-height: 200px; overflow-y: auto; }
-        .item { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f4f5f7; }
-        .success { color: #61bd4f; }
-        .error { color: #eb5a46; }
-        .loader { color: #5e6c84; font-style: italic; }
+        body { font-family: sans-serif; padding: 10px; color: #172b4d; background: #f4f5f7; }
+        .card { background: white; padding: 10px; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        input { width: 100%; padding: 8px; margin-bottom: 5px; border: 1px solid #ddd; border-radius: 3px; }
+        button { width: 100%; padding: 10px; background: #0079bf; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; }
+        #log { margin-top: 10px; font-size: 11px; max-height: 150px; overflow-y: auto; background: #eee; padding: 5px; border-radius: 3px; }
+        .download-link { display: block; padding: 5px; margin-top: 5px; background: #ebecf0; color: #172b4d; text-decoration: none; border-radius: 3px; text-align: center; font-size: 12px; }
+        .download-link:hover { background: #dfe1e6; }
     </style>
 </head>
 <body>
-    <div id="setup-ui">
-        <div class="input-group"><input type="password" id="apiKey" placeholder="Trello API Key"></div>
-        <div class="input-group"><input type="password" id="token" placeholder="Trello Token"></div>
+    <div class="card">
+        <input type="password" id="apiKey" placeholder="API Key">
+        <input type="password" id="token" placeholder="Token">
+        <button id="exec">一括ダウンロード</button>
+        <div id="log">ログ: 待機中</div>
+        <div id="manual-links"></div>
     </div>
-    <button id="exec">一括ダウンロード開始</button>
-    <div id="status-list"></div>
 
     <script>
         const t = TrelloPowerUp.iframe();
-        const statusList = document.getElementById('status-list');
-
-        // 設定の復元
         document.getElementById('apiKey').value = localStorage.getItem('trello_key') || '';
         document.getElementById('token').value = localStorage.getItem('trello_token') || '';
-
-        function log(msg, className = '') {
-            const div = document.createElement('div');
-            div.className = 'item ' + className;
-            div.innerHTML = `<span>${msg}</span>`;
-            statusList.prepend(div);
-        }
 
         document.getElementById('exec').addEventListener('click', async function() {
             const key = document.getElementById('apiKey').value.trim();
             const token = document.getElementById('token').value.trim();
-
-            if (!key || !token) {
-                log("API KeyとTokenを入力してください", "error");
-                return;
-            }
-
+            const log = document.getElementById('log');
+            const links = document.getElementById('manual-links');
+            
             localStorage.setItem('trello_key', key);
             localStorage.setItem('trello_token', token);
-            statusList.innerHTML = ''; // クリア
+            links.innerHTML = '';
+            log.innerText = "開始します...";
 
             try {
-                log("カード情報を読み込み中...", "loader");
                 const card = await t.card('all');
-                const images = (card.attachments || []).filter(a => {
-                    const name = a.name ? a.name.toLowerCase() : '';
-                    return name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.gif') || name.endsWith('.webp');
-                });
-
-                if (images.length === 0) {
-                    log("画像が見つかりませんでした", "error");
-                    return;
-                }
-
+                const images = (card.attachments || []).filter(a => a.name.match(/\.(jpg|jpeg|png|gif|webp)$/i));
                 const zip = new JSZip();
-                let count = 0;
+                let successCount = 0;
 
                 for (const img of images) {
-                    log(`${img.name} を取得中...`, "loader");
+                    const connector = img.url.includes('?') ? '&' : '?';
+                    const authUrl = `${img.url}${connector}key=${key}&token=${token}`;
+                    
                     try {
-                        // 論理的に正しいURL結合 (?があれば&、なければ?で結合)
-                        const connector = img.url.includes('?') ? '&' : '?';
-                        const authUrl = `${img.url}${connector}key=${key}&token=${token}`;
-
+                        // ZIP化のためにデータを取得
                         const response = await fetch(authUrl);
-                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                        
+                        if (!response.ok) throw new Error(response.status);
                         const blob = await response.blob();
                         zip.file(img.name, blob);
-                        log(`OK: ${img.name}`, "success");
-                        count++;
+                        successCount++;
+                        log.innerText += `\nOK: ${img.name}`;
                     } catch (e) {
-                        log(`ERR: ${img.name} (${e.message})`, "error");
+                        // 失敗した場合、手動ダウンロード用のボタンを表示
+                        log.innerText += `\nNG: ${img.name} (CORS/認証エラー)`;
+                        const a = document.createElement('a');
+                        a.href = authUrl;
+                        a.target = "_blank";
+                        a.className = "download-link";
+                        a.innerText = `📎 ${img.name} を手動で開く`;
+                        links.appendChild(a);
                     }
                 }
 
-                if (count > 0) {
-                    log("ZIPファイルを生成中...", "loader");
+                if (successCount > 0) {
                     const content = await zip.generateAsync({type: "blob"});
                     const a = document.createElement('a');
                     a.href = window.URL.createObjectURL(content);
                     a.download = `${card.name}_images.zip`;
                     a.click();
-                    log("ダウンロード完了！", "success");
+                    log.innerText += "\nZIP保存完了！";
+                } else if (images.length > 0) {
+                    log.innerText += "\n一括保存に失敗しました。下のリンクから個別に保存してください。";
                 }
             } catch (err) {
-                log("致命的エラー: " + err.message, "error");
+                log.innerText += "\nエラー: " + err.message;
             }
         });
     </script>
